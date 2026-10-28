@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { config } from "./config";
-import { SCHEMA } from "./schema.mjs";
+import { SCHEMA } from "./schema";
 
 type Db = Database.Database;
 const globalForDb = globalThis as unknown as { __storeDb?: Db };

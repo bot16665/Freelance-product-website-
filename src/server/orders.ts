@@ -1,11 +1,8 @@
 import { randomInt, randomUUID } from "node:crypto";
 import { getDb } from "./db";
-import { badRequest, HttpError, text } from "./http";
+import { badRequest, HttpError, text, type Row } from "./http";
 import type { SessionUser } from "./auth";
 import type { Order, OrderLine, OrderStatus } from "@/lib/types";
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-type Row = Record<string, any>;
 
 const GSTIN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 const ORDER_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -57,13 +54,40 @@ function loadOrders(rows: Row[]): Order[] {
   return rows.map((r) => toOrder(r, byOrder.get(r.id) ?? []));
 }
 
-export function listOrders(scope: "mine" | "all", uid: string) {
+/** Newest first. `limit` keeps responses small; clients can page with `before` (an older created_at).
+ *  `from`/`to` restrict to a date range (used for the Excel export). */
+export function listOrders(
+  scope: "mine" | "all",
+  uid: string,
+  opts: { limit?: number; before?: number; from?: number; to?: number } = {}
+) {
   const db = getDb();
-  const rows =
-    scope === "all"
-      ? (db.prepare("SELECT * FROM orders ORDER BY created_at DESC LIMIT 500").all() as Row[])
-      : (db.prepare("SELECT * FROM orders WHERE buyer_id = ? ORDER BY created_at DESC LIMIT 500").all(uid) as Row[]);
-  return loadOrders(rows);
+  const limit = Math.max(1, Math.min(opts.limit ?? 200, 500));
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (scope !== "all") {
+    clauses.push("buyer_id = ?");
+    params.push(uid);
+  }
+  if (opts.before !== undefined) {
+    clauses.push("created_at < ?");
+    params.push(opts.before);
+  }
+  if (opts.from !== undefined) {
+    clauses.push("created_at >= ?");
+    params.push(opts.from);
+  }
+  if (opts.to !== undefined) {
+    clauses.push("created_at <= ?");
+    params.push(opts.to);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = db
+    .prepare(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT ?`)
+    .all(...params, limit + 1) as Row[]; // one extra row to detect "more"
+  const hasMore = rows.length > limit;
+  const orders = loadOrders(rows.slice(0, limit));
+  return { orders, hasMore };
 }
 
 export function getOrder(id: string) {

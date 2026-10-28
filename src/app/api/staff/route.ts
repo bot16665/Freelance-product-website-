@@ -1,9 +1,7 @@
 import { config } from "@/server/config";
 import { requireSeller } from "@/server/auth";
 import { getDb } from "@/server/db";
-import { badRequest, handle, HttpError, readJson } from "@/server/http";
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import { badRequest, handle, HttpError, readJson, type Row } from "@/server/http";
 
 /** Everyone who has ever signed in, and whether they are staff. */
 export const GET = handle(async (req: Request) => {
@@ -14,7 +12,7 @@ export const GET = handle(async (req: Request) => {
        FROM users u LEFT JOIN sellers s ON s.uid = u.uid
        ORDER BY u.last_seen DESC LIMIT 500`
     )
-    .all() as any[];
+    .all() as Row[];
   const users = rows.map((r) => ({
     uid: r.uid,
     email: r.email,

@@ -7,7 +7,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { SCHEMA } from "../src/server/schema.mjs";
+const SCHEMA_URL = new URL("../src/server/schema.ts", import.meta.url);
+// .mjs script can't import TS directly; pull the SCHEMA string out of the TS source.
+const SCHEMA = /export const SCHEMA = `([\s\S]*?)`;/.exec(fs.readFileSync(SCHEMA_URL, "utf8"))?.[1];
+if (!SCHEMA) {
+  console.error("Could not read SCHEMA from src/server/schema.ts");
+  process.exit(1);
+}
 
 const file = process.argv[2];
 if (!file || !fs.existsSync(file)) {

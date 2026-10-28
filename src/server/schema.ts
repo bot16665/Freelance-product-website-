@@ -1,5 +1,5 @@
-// The whole SQL schema. Plain .mjs so both the app and scripts/ can import it.
-// Standard SQL types are used on purpose, so moving to MySQL/PostgreSQL later is easy.
+// The whole SQL schema. Standard SQL types are used on purpose, so moving to
+// MySQL/PostgreSQL later is easy. scripts/import-firebase.mjs imports it too.
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   uid         TEXT PRIMARY KEY,          -- Firebase user id

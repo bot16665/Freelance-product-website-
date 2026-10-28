@@ -1,6 +1,6 @@
 # Store setup (read this once)
 
-The app now has **two kinds of users**.
+The app has **two kinds of users**.
 
 | | Customer (default) | Store staff ("seller") |
 |---|---|---|
@@ -9,38 +9,45 @@ The app now has **two kinds of users**.
 | Lands on | `/orders` (Shop) | `/dashboard` (Items) |
 
 ## 1. Make yourself (and your staff) a seller
-Nobody can make themselves a seller from the app. It is done in the Firebase console:
 
-1. Sign in to the app once with the Google account.
-2. A "Store staff only" screen shows your **user ID**. Copy it (or find it in Firebase → Authentication → Users → User UID).
-3. Firebase console → Realtime Database → Data → add this at the root:
-   `sellers` → `<that user ID>` → value `true`
-4. Refresh the app. You now see Items and Customer orders.
+Nobody can make themselves a seller from the app. Access is controlled by the
+`OWNER_EMAILS` environment variable plus the staff list inside the app:
 
-Repeat for each staff member. Remove the entry to remove access.
+1. Put your Google email in `.env` → `OWNER_EMAILS=you@example.com` (comma separated for several owners) and restart the server.
+2. Sign in to the app with that account. You are now staff.
+3. On the **Staff** page (`/dashboard/staff`) you can grant or remove staff access for anyone who has signed in.
 
-## 2. Publish the new rules (required)
-Realtime Database → Rules → paste `database.rules.json` → Publish.
-(The old rules file `firebase_ruls` was removed. It is incompatible with the store.)
+Owners always have access and cannot be removed from the app (change `OWNER_EMAILS` instead).
 
-## 3. Existing items
-Items added before this update are not in the store yet. On the Items page click **Sync all to store**
-(items need a price and stock to be sold). New items are published automatically
-(tick/untick "Show this item in the store" in the form).
+## 2. Firebase
 
-Old orders were saved with the previous format and will not appear in the new order screens.
+Firebase is used **only for signing in** (Google login). No Realtime Database,
+Storage, or rules are needed — all data lives in the SQL database behind the `/api` routes.
+
+## 3. Data and backups
+
+* SQLite database: `data/store.db` (change with `DATABASE_FILE`).
+* Uploaded images: `data/uploads` (change with `UPLOAD_DIR`).
+* Backing up the `data/` folder backs up everything.
 
 ## 4. Edit your invoice details
+
 `src/lib/company.ts` (company name, address, GSTIN, bank, terms).
 
+## 5. Migrating old Firebase data
+
+`npm run import:firebase -- path/to/firebase-export.json` copies products and
+orders from an old Firebase Realtime Database export into the SQL database.
+
 ## How an order flows
-1. Customer adds items, enters company details, places order -> status **Placed** (proforma invoice).
-2. Staff open **Customer orders** -> **Confirm** (stock is reduced, becomes a **Tax invoice**) or **Reject**.
+
+1. Customer adds items, enters company details, places order -> status **Placed**
+   (proforma invoice). Stock is reserved immediately.
+2. Staff open **Customer orders** -> **Confirm** (becomes a **Tax invoice**) or **Cancel** (stock is returned).
 3. Staff mark **Delivered**. A customer can cancel their own order only while it is Placed.
 
-## Known limits (without a backend)
-* Stock is reduced when staff confirm, not when the customer orders. Two customers can order the last unit;
-  the second confirmation fails with "Not enough stock" and staff reject it.
-* Image uploads are limited to 2 MB images in the user's own folder, but Storage rules cannot check the
-  seller list. For strict control use Firebase custom claims / a Cloud Function.
-* For payments, automatic email and fully tamper-proof totals, move order placing to a Cloud Function.
+## Known limits
+
+* Prices, GST and stock are all decided by the server — the browser cannot change them.
+* Image uploads are limited to JPG/PNG/WebP under 2 MB, verified by file content on the server.
+* For online payments or automatic emails, integrate a payment provider and mail service.

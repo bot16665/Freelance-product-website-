@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "./db";
-import { badRequest, num, text } from "./http";
+import { badRequest, num, text, type Row } from "./http";
 import type { InventoryItem } from "@/lib/types";
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-type Row = Record<string, any>;
 
 function parseUrls(v: unknown): string[] {
   try {

@@ -32,6 +32,11 @@ export async function readJson(req: Request): Promise<Record<string, unknown>> {
 
 /* small validators used by the API */
 
+/** A raw SQLite row. Column values come back as `unknown` to the type system, but
+ *  every access is guarded by the mapper functions, so `any` is acceptable here. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Row = Record<string, any>;
+
 export function text(v: unknown, max: number, label: string, required = false): string | null {
   if (v === undefined || v === null || v === "") {
     if (required) throw badRequest(`${label} is required.`);
