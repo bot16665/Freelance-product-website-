@@ -1,0 +1,56 @@
+{
+  "rules": {
+    "sellers": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": false
+      }
+    },
+
+    "items": {
+      ".read": "auth != null && root.child('sellers').child(auth.uid).exists()",
+      ".write": "auth != null && root.child('sellers').child(auth.uid).exists()",
+      "$itemId": {
+        ".validate": "!newData.exists() || (newData.child('itemName').isString() && newData.child('createdBy').isString())"
+      }
+    },
+
+    "catalog": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('sellers').child(auth.uid).exists()",
+      "$itemId": {
+        ".validate": "!newData.exists() || (newData.child('itemName').isString() && newData.child('sellingPrice').isNumber() && newData.child('quantity').isNumber())",
+        "sellingPrice": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "quantity": {
+          ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() % 1 === 0"
+        }
+      }
+    },
+
+    "orders": {
+      ".indexOn": ["buyerId"],
+      ".read": "auth != null && (root.child('sellers').child(auth.uid).exists() || (query.orderByChild == 'buyerId' && query.equalTo == auth.uid))",
+      "$orderId": {
+        ".read": "auth != null && (root.child('sellers').child(auth.uid).exists() || data.child('buyerId').val() === auth.uid)",
+        ".write": "auth != null && (root.child('sellers').child(auth.uid).exists() || (!data.exists() && newData.child('buyerId').val() === auth.uid))",
+        ".validate": "!newData.exists() || (newData.hasChildren(['buyerId', 'status', 'items', 'customerName', 'phone', 'address', 'createdAt']) && (data.exists() || newData.child('status').val() === 'Placed'))",
+
+        "status": {
+          ".write": "auth != null && data.parent().child('buyerId').val() === auth.uid && data.val() === 'Placed' && newData.val() === 'Cancelled'",
+          ".validate": "newData.isString() && newData.val().matches(/^(Placed|Confirmed|Delivered|Cancelled)$/)"
+        },
+        "updatedAt": {
+          ".write": "auth != null && data.parent().child('buyerId').val() === auth.uid && data.parent().child('status').val() === 'Placed'"
+        },
+
+        "items": {
+          "$itemId": {
+            ".validate": "newData.child('price').isNumber() && newData.child('quantity').isNumber() && newData.child('quantity').val() >= 1 && newData.child('quantity').val() % 1 === 0 && newData.child('price').val() === root.child('catalog').child($itemId).child('sellingPrice').val() && newData.child('quantity').val() <= root.child('catalog').child($itemId).child('quantity').val() && newData.child('lineTotal').val() === newData.child('price').val() * newData.child('quantity').val()"
+          }
+        }
+      }
+    }
+  }
+}

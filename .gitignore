@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+.env
+.firebase.ts
+
 
 # vercel
 .vercel
@@ -39,3 +42,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# your store data (database + uploaded images) and secrets: never commit these
+/data/
+.env*
+!.env.example

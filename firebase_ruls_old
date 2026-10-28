@@ -1,0 +1,15 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "items": {
+      ".indexOn": ["createdBy"],
+      ".read": "auth != null && query.orderByChild == 'createdBy' && query.equalTo == auth.uid",
+      "$itemId": {
+        ".read": "auth != null && (!data.exists() || data.child('createdBy').val() === auth.uid)",
+        ".write": "auth != null && (!data.exists() || data.child('createdBy').val() === auth.uid)",
+        ".validate": "!newData.exists() || newData.child('createdBy').val() === auth.uid"
+      }
+    }
+  }
+}
