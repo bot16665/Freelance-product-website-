@@ -49,4 +49,6 @@ next-env.d.ts
 !.env.example
 
 # Firebase configuration file
-src/lib/firebase.ts
+# src/lib/firebase.ts is intentionally COMMITTED: it only contains the public
+# Firebase web config (API keys for web apps are not secrets). If it were ignored,
+# Vercel deploys would fail with "Can't resolve '@/lib/firebase'".
