@@ -59,8 +59,11 @@ Browser ──(Firebase login token)──> /api routes ──> SQLite (data/sto
 | Deleting a product breaks old orders | Orders store their own copy of name/price/GST. |
 
 ## Deploying
-SQLite is a file, so you need a server with a **persistent disk** (your own PC, a VPS, Railway/Render with a disk).
-It will **not** work on serverless hosts like Vercel. Steps: `npm run build` then `npm start`, keep `.env.local` and the `data/` folder.
+Two options:
+
+* **Vercel (easiest, free):** the database and images must live in the cloud — set `DATABASE_URL` + `DATABASE_AUTH_TOKEN` (free [Turso](https://turso.tech) SQLite) and `BLOB_READ_WRITE_TOKEN` (Vercel Blob for images) in your Vercel project's environment variables. Leave them empty locally to keep using the plain files.
+* **Your own server:** keep everything local. Steps: `npm run build` then `npm start`, keep `.env.local` and the `data/` folder.
+
 Add your site's domain in Firebase console → Authentication → Settings → **Authorized domains** (needed for Google login).
 
 ## Switching to MySQL/PostgreSQL later

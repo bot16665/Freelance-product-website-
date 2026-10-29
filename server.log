@@ -1,0 +1,9 @@
+
+> store-management@0.1.0 start
+> next start
+
+▲ Next.js 16.4.0
+- Local:         http://localhost:3000
+- Network:       http://192.168.11.111:3000
+✓ Ready in 193ms
+✓ Running next.config.ts took 43ms
