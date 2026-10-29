@@ -10,13 +10,10 @@
     "import:firebase": "node scripts/import-firebase.mjs"
   },
   "dependencies": {
-    "@libsql/client": "^0.18.0",
-    "@vercel/blob": "^2.8.2",
     "better-sqlite3": "^13.0.3",
     "exceljs": "^4.4.0",
     "firebase": "^13.0.0",
     "jose": "^6.2.13",
-    "libsql": "^0.5.29",
     "lucide-react": "^1.56.0",
     "next": "16.4.0",
     "react": "19.3.0",

@@ -1,12 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { put } from "@vercel/blob";
 import { requireSeller } from "@/server/auth";
 import { config } from "@/server/config";
 import { badRequest, handle } from "@/server/http";
-
-const MIME: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
 
 /** Real file type from the first bytes (the browser's claimed type cannot be trusted). */
 function detectImage(b: Buffer): "jpg" | "png" | "webp" | null {
@@ -32,20 +29,8 @@ export const POST = handle(async (req: Request) => {
   const ext = detectImage(bytes);
   if (!ext) throw badRequest("Only JPG, PNG or WebP images are allowed.");
 
-  const name = `${randomUUID()}.${ext}`;
-
-  if (config.blobReadWriteToken) {
-    // Production (e.g. Vercel): store the image in Vercel Blob.
-    const blob = await put(`products/${name}`, bytes, {
-      contentType: MIME[ext],
-      token: config.blobReadWriteToken,
-      access: "public",
-    });
-    return Response.json({ url: blob.url }, { status: 201 });
-  }
-
-  // Local dev: keep writing to the uploads folder.
   await fs.mkdir(config.uploadDir, { recursive: true });
+  const name = `${randomUUID()}.${ext}`;
   await fs.writeFile(path.join(config.uploadDir, name), bytes);
   return Response.json({ url: `/api/files/${name}` }, { status: 201 });
 });
