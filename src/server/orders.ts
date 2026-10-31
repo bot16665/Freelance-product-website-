@@ -1,4 +1,5 @@
 import { randomInt, randomUUID } from "node:crypto";
+import type { InValue, ResultSet } from "@libsql/client";
 import { getDb } from "./db";
 import { badRequest, HttpError, text, type Row } from "./http";
 import type { SessionUser } from "./auth";
@@ -42,29 +43,29 @@ function toOrder(r: Row, lines: Row[]): Order {
   };
 }
 
-function loadOrders(rows: Row[]): Order[] {
+async function loadOrders(db: Awaited<ReturnType<typeof getDb>>, rows: Row[]): Promise<Order[]> {
   if (rows.length === 0) return [];
-  const db = getDb();
   const marks = rows.map(() => "?").join(",");
-  const lines = db
-    .prepare(`SELECT * FROM order_items WHERE order_id IN (${marks}) ORDER BY id`)
-    .all(...rows.map((r) => r.id)) as Row[];
+  const lines = await db.execute({
+    sql: `SELECT * FROM order_items WHERE order_id IN (${marks}) ORDER BY id`,
+    args: rows.map((r) => r.id) as InValue[],
+  });
   const byOrder = new Map<string, Row[]>();
-  for (const l of lines) byOrder.set(l.order_id, [...(byOrder.get(l.order_id) ?? []), l]);
+  for (const l of lines.rows as Row[]) byOrder.set(l.order_id, [...(byOrder.get(l.order_id) ?? []), l]);
   return rows.map((r) => toOrder(r, byOrder.get(r.id) ?? []));
 }
 
 /** Newest first. `limit` keeps responses small; clients can page with `before` (an older created_at).
  *  `from`/`to` restrict to a date range (used for the Excel export). */
-export function listOrders(
+export async function listOrders(
   scope: "mine" | "all",
   uid: string,
   opts: { limit?: number; before?: number; from?: number; to?: number } = {}
 ) {
-  const db = getDb();
+  const db = await getDb();
   const limit = Math.max(1, Math.min(opts.limit ?? 200, 500));
   const clauses: string[] = [];
-  const params: unknown[] = [];
+  const params: InValue[] = [];
   if (scope !== "all") {
     clauses.push("buyer_id = ?");
     params.push(uid);
@@ -82,17 +83,21 @@ export function listOrders(
     params.push(opts.to);
   }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const rows = db
-    .prepare(`SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT ?`)
-    .all(...params, limit + 1) as Row[]; // one extra row to detect "more"
+  // one extra row to detect "more"
+  const res = await db.execute({
+    sql: `SELECT * FROM orders ${where} ORDER BY created_at DESC LIMIT ?`,
+    args: [...params, limit + 1],
+  });
+  const rows = res.rows as Row[];
   const hasMore = rows.length > limit;
-  const orders = loadOrders(rows.slice(0, limit));
+  const orders = await loadOrders(db, rows.slice(0, limit));
   return { orders, hasMore };
 }
 
-export function getOrder(id: string) {
-  const row = getDb().prepare("SELECT * FROM orders WHERE id = ?").get(id) as Row | undefined;
-  return row ? loadOrders([row])[0] : null;
+export async function getOrder(id: string) {
+  const db = await getDb();
+  const res = await db.execute({ sql: "SELECT * FROM orders WHERE id = ?", args: [id] });
+  return res.rows.length ? (await loadOrders(db, [res.rows[0] as Row]))[0] : null;
 }
 
 /* ------------------------------ place order ------------------------------ */
@@ -135,38 +140,41 @@ function parseLines(raw: unknown) {
  * Prices, GST and stock all come from the database, never from the browser, so a customer
  * cannot change a price. Stock is reserved straight away (and returned if the order is cancelled).
  */
-export function placeOrder(user: SessionUser, body: Record<string, unknown>): Order {
+export async function placeOrder(user: SessionUser, body: Record<string, unknown>): Promise<Order> {
   const lines = parseLines(body.lines);
   const d = parseDetails(body.details);
-  const db = getDb();
+  const db = await getDb();
 
-  const run = db.transaction(() => {
+  const tx = await db.transaction("write");
+  try {
     const now = Date.now();
-    const id = randomUUID();
+    const orderId = randomUUID();
     let orderNo = "";
     for (let i = 0; i < 10; i++) {
       const candidate = "ORD-" + Array.from({ length: 6 }, () => ORDER_CHARS[randomInt(ORDER_CHARS.length)]).join("");
-      if (!db.prepare("SELECT 1 FROM orders WHERE order_no = ?").get(candidate)) {
+      const exists = await tx.execute({ sql: "SELECT 1 FROM orders WHERE order_no = ?", args: [candidate] });
+      if (exists.rows.length === 0) {
         orderNo = candidate;
         break;
       }
     }
     if (!orderNo) throw new HttpError(500, "Could not create an order number. Please try again.");
 
-    const reserve = db.prepare(
+    const reserve =
       `UPDATE products SET quantity = quantity - ?, updated_at = ?
-       WHERE id = ? AND published = 1 AND selling_price > 0 AND quantity >= ?`
-    );
-    const find = db.prepare("SELECT * FROM products WHERE id = ?");
+       WHERE id = ? AND published = 1 AND selling_price > 0 AND quantity >= ?`;
+    const find = "SELECT * FROM products WHERE id = ?";
 
     const priced: { p: Row; quantity: number; lineTotal: number }[] = [];
     for (const { itemId, quantity } of lines) {
-      const p = find.get(itemId) as Row | undefined;
+      const found = await tx.execute({ sql: find, args: [itemId] });
+      const p = found.rows[0] as Row | undefined;
       if (!p || p.published !== 1 || !(p.selling_price > 0)) {
         throw new HttpError(409, `${p?.name ?? "A product in your cart"} is no longer available. Please refresh the store.`);
       }
-      if (reserve.run(quantity, now, itemId, quantity).changes !== 1) {
-        const left = (find.get(itemId) as Row).quantity ?? 0;
+      const res: ResultSet = await tx.execute({ sql: reserve, args: [quantity, now, itemId, quantity] });
+      if (res.rowsAffected !== 1) {
+        const left = (p.quantity as number | null) ?? 0;
         throw new HttpError(
           409,
           left > 0 ? `Only ${left} of ${p.name} left in stock.` : `${p.name} is out of stock.`
@@ -179,37 +187,42 @@ export function placeOrder(user: SessionUser, body: Record<string, unknown>): Or
     const totalItems = priced.reduce((s, x) => s + x.quantity, 0);
     const suffix = orderNo.replace("ORD-", "");
 
-    db.prepare(
-      `INSERT INTO orders (id, order_no, invoice_no, status, company_name, gstin, email, customer_name, phone, address,
-         notes, payment_method, total_items, total, buyer_id, buyer_email, created_at, updated_at)
-       VALUES (?, ?, ?, 'Placed', ?, ?, ?, ?, ?, ?, ?, 'Cash on Delivery', ?, ?, ?, ?, ?, ?)`
-    ).run(
-      id, orderNo, `INV-${new Date(now).getFullYear()}-${suffix}`, d.companyName, d.gstin, d.email, d.customerName,
-      d.phone, d.address, d.notes, totalItems, total, user.uid, user.email, now, now
-    );
+    await tx.execute({
+      sql: `INSERT INTO orders (id, order_no, invoice_no, status, company_name, gstin, email, customer_name, phone, address,
+           notes, payment_method, total_items, total, buyer_id, buyer_email, created_at, updated_at)
+         VALUES (?, ?, ?, 'Placed', ?, ?, ?, ?, ?, ?, ?, 'Cash on Delivery', ?, ?, ?, ?, ?, ?)`,
+      args: [
+        orderId, orderNo, `INV-${new Date(now).getFullYear()}-${suffix}`, d.companyName, d.gstin, d.email, d.customerName,
+        d.phone, d.address, d.notes, totalItems, total, user.uid, user.email, now, now,
+      ],
+    });
 
-    const insertLine = db.prepare(
-      `INSERT INTO order_items (order_id, product_id, name, brand, image, price, quantity, line_total, gst_rate)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
     for (const { p, quantity, lineTotal } of priced) {
-      insertLine.run(id, p.id, p.name, p.brand, p.main_image, p.selling_price, quantity, lineTotal, p.gst_rate ?? 18);
+      await tx.execute({
+        sql: `INSERT INTO order_items (order_id, product_id, name, brand, image, price, quantity, line_total, gst_rate)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [orderId, p.id, p.name, p.brand, p.main_image, p.selling_price, quantity, lineTotal, p.gst_rate ?? 18],
+      });
     }
-    return id;
-  });
-
-  return getOrder(run()) as Order;
+    await tx.commit();
+    return getOrder(orderId) as Promise<Order>;
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  }
 }
 
 /* ------------------------------ status changes ------------------------------ */
 
 export type OrderAction = "confirm" | "cancel" | "deliver";
 
-export function changeStatus(id: string, action: OrderAction, user: SessionUser): Order {
-  const db = getDb();
+export async function changeStatus(id: string, action: OrderAction, user: SessionUser): Promise<Order> {
+  const db = await getDb();
 
-  const run = db.transaction(() => {
-    const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(id) as Row | undefined;
+  const tx = await db.transaction("write");
+  try {
+    const found = await tx.execute({ sql: "SELECT * FROM orders WHERE id = ?", args: [id] });
+    const order = found.rows[0] as Row | undefined;
     if (!order) throw new HttpError(404, "Order not found.");
 
     const isStaff = user.role === "seller";
@@ -233,18 +246,28 @@ export function changeStatus(id: string, action: OrderAction, user: SessionUser)
     }
 
     // The status condition makes sure two people can never cancel (and restock) the same order twice
-    const res = db
-      .prepare("UPDATE orders SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
-      .run(t.to, Date.now(), id, order.status);
-    if (res.changes !== 1) throw new HttpError(409, "This order was just changed by someone else. Refresh and try again.");
+    const res: ResultSet = await tx.execute({
+      sql: "UPDATE orders SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+      args: [t.to, Date.now(), id, order.status],
+    });
+    if (res.rowsAffected !== 1) throw new HttpError(409, "This order was just changed by someone else. Refresh and try again.");
 
     if (action === "cancel") {
-      const lines = db.prepare("SELECT product_id, quantity FROM order_items WHERE order_id = ?").all(id) as Row[];
-      const restock = db.prepare("UPDATE products SET quantity = COALESCE(quantity, 0) + ?, updated_at = ? WHERE id = ?");
-      for (const l of lines) restock.run(l.quantity, Date.now(), l.product_id);
+      const lines = await tx.execute({
+        sql: "SELECT product_id, quantity FROM order_items WHERE order_id = ?",
+        args: [id],
+      });
+      for (const l of lines.rows as Row[]) {
+        await tx.execute({
+          sql: "UPDATE products SET quantity = COALESCE(quantity, 0) + ?, updated_at = ? WHERE id = ?",
+          args: [l.quantity, Date.now(), l.product_id],
+        });
+      }
     }
-  });
-
-  run();
-  return getOrder(id) as Order;
+    await tx.commit();
+    return getOrder(id) as Promise<Order>;
+  } catch (err) {
+    await tx.rollback();
+    throw err;
+  }
 }

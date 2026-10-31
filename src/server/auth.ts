@@ -30,7 +30,7 @@ export async function verifyFirebaseToken(token: string) {
   return payload;
 }
 
-/** Who is calling? Also remembers the user in the `users` table. */
+/** Who is calling? Also remembers the user in the `users` table (at most once every 5 minutes). */
 export async function getSession(req: Request): Promise<SessionUser | null> {
   const header = req.headers.get("authorization") ?? "";
   const match = /^Bearer (.+)$/.exec(header);
@@ -48,15 +48,21 @@ export async function getSession(req: Request): Promise<SessionUser | null> {
   const name = typeof payload.name === "string" ? payload.name : null;
   const verified = payload.email_verified === true;
 
-  const db = getDb();
+  const db = await getDb();
   const now = Date.now();
-  db.prepare(
-    `INSERT INTO users (uid, email, name, created_at, last_seen) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(uid) DO UPDATE SET email = excluded.email, name = excluded.name, last_seen = excluded.last_seen`
-  ).run(uid, email, name, now, now);
+
+  // The 5-minute window means the common case (polling every few seconds) is a single read.
+  const seen = await db.execute({ sql: "SELECT last_seen FROM users WHERE uid = ?", args: [uid] });
+  if (seen.rows.length === 0 || now - (seen.rows[0].last_seen as number) >= 5 * 60 * 1000) {
+    await db.execute({
+      sql: `INSERT INTO users (uid, email, name, created_at, last_seen) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(uid) DO UPDATE SET email = excluded.email, name = excluded.name, last_seen = excluded.last_seen`,
+      args: [uid, email, name, now, now],
+    });
+  }
 
   const isOwner = !!email && verified && config.ownerEmails.includes(email.toLowerCase());
-  const isSeller = isOwner || !!db.prepare("SELECT 1 FROM sellers WHERE uid = ?").get(uid);
+  const isSeller = isOwner || (await db.execute({ sql: "SELECT 1 FROM sellers WHERE uid = ?", args: [uid] })).rows.length > 0;
 
   return { uid, email, name, role: isSeller ? "seller" : "buyer", isOwner };
 }

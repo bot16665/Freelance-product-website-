@@ -1,5 +1,3 @@
-import path from "node:path";
-
 const list = (v: string | undefined) =>
   (v ?? "")
     .split(",")
@@ -8,10 +6,10 @@ const list = (v: string | undefined) =>
 
 /** Everything configurable lives in .env.local (see .env.example). */
 export const config = {
-  /** SQLite database file. Back up this one file and you have backed up everything. */
-  databaseFile: path.resolve(process.env.DATABASE_FILE ?? "./data/store.db"),
-  /** Uploaded product images. */
-  uploadDir: path.resolve(process.env.UPLOAD_DIR ?? "./data/uploads"),
+  /** Turso database URL. `file:./data/store.db` runs on a local SQLite file. */
+  tursoDatabaseUrl: process.env.TURSO_DATABASE_URL ?? "file:./data/store.db",
+  /** Auth token for hosted Turso. Leave empty for a local file. */
+  tursoAuthToken: process.env.TURSO_AUTH_TOKEN ?? undefined,
   /** Must match your Firebase project (used to check login tokens). */
   firebaseProjectId: process.env.FIREBASE_PROJECT_ID ?? "printer-sys",
   /** Where the public keys for checking Firebase tokens come from. Only change this for tests. */

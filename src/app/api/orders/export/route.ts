@@ -25,7 +25,7 @@ export const GET = handle(async (req: Request) => {
   const from = parseDay(params.get("from"));
   const to = parseDay(params.get("to"), true);
   // exports can be big, so pull up to 5000 orders
-  const { orders } = listOrders("all", "", { limit: 5000, from, to });
+  const { orders } = await listOrders("all", "", { limit: 5000, from, to });
 
   const wb = new ExcelJS.Workbook();
   wb.creator = SELLER.name;

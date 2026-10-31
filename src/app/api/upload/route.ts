@@ -1,6 +1,5 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { put } from "@vercel/blob";
 import { requireSeller } from "@/server/auth";
 import { config } from "@/server/config";
 import { badRequest, handle } from "@/server/http";
@@ -29,8 +28,17 @@ export const POST = handle(async (req: Request) => {
   const ext = detectImage(bytes);
   if (!ext) throw badRequest("Only JPG, PNG or WebP images are allowed.");
 
-  await fs.mkdir(config.uploadDir, { recursive: true });
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    throw badRequest("Image storage is not configured. Add BLOB_READ_WRITE_TOKEN to the environment.");
+  }
+
+  // Stored in Vercel Blob under uploads/<uuid>.<ext>; the public URL is returned and
+  // saved directly on the product, so nothing is proxied through this server.
   const name = `${randomUUID()}.${ext}`;
-  await fs.writeFile(path.join(config.uploadDir, name), bytes);
-  return Response.json({ url: `/api/files/${name}` }, { status: 201 });
+  const blob = await put(`uploads/${name}`, bytes, {
+    access: "public",
+    contentType: `image/${ext === "jpg" ? "jpeg" : ext}`,
+    addRandomSuffix: false,
+  });
+  return Response.json({ url: blob.url }, { status: 201 });
 });

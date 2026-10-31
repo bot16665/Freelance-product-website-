@@ -6,5 +6,5 @@ export const PATCH = handle(async (req: Request, { params }: { params: Promise<{
   const user = await requireUser(req);
   const { action } = await readJson(req);
   if (action !== "confirm" && action !== "cancel" && action !== "deliver") throw badRequest("Unknown action.");
-  return Response.json({ order: changeStatus((await params).id, action as OrderAction, user) });
+  return Response.json({ order: await changeStatus((await params).id, action as OrderAction, user) });
 });

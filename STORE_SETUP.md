@@ -26,9 +26,9 @@ Storage, or rules are needed — all data lives in the SQL database behind the `
 
 ## 3. Data and backups
 
-* SQLite database: `data/store.db` (change with `DATABASE_FILE`).
-* Uploaded images: `data/uploads` (change with `UPLOAD_DIR`).
-* Backing up the `data/` folder backs up everything.
+* Turso database (`TURSO_DATABASE_URL`; locally a `data/*.db` SQLite file is used automatically).
+* Product images: Vercel Blob (public URLs stored on the products).
+* Backing up: Turso handles backups (`turso db export` for an extra copy); locally, copy the `data/` folder.
 
 ## 4. Edit your invoice details
 

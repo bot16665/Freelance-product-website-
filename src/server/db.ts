@@ -1,21 +1,30 @@
-import fs from "node:fs";
-import path from "node:path";
-import Database from "better-sqlite3";
+import { createClient, type Client } from "@libsql/client";
 import { config } from "./config";
 import { SCHEMA } from "./schema";
 
-type Db = Database.Database;
-const globalForDb = globalThis as unknown as { __storeDb?: Db };
+const globalForDb = globalThis as unknown as { __storeClient?: Client; __storeReady?: Promise<Client> };
 
-/** One shared connection (also survives hot reloads in `next dev`). */
-export function getDb(): Db {
-  if (!globalForDb.__storeDb) {
-    fs.mkdirSync(path.dirname(config.databaseFile), { recursive: true });
-    const db = new Database(config.databaseFile);
-    db.pragma("journal_mode = WAL"); // faster, and safe for many readers
-    db.pragma("foreign_keys = ON");
-    db.exec(SCHEMA);
-    globalForDb.__storeDb = db;
+/**
+ * One shared libsql client (also survives hot reloads in `next dev`), plus the schema
+ * applied exactly once per server instance. Local files work too: `file:./data/store.db`.
+ */
+export function getDb(): Promise<Client> {
+  if (!globalForDb.__storeReady) {
+    if (process.env.NODE_ENV === "production" && !process.env.TURSO_DATABASE_URL) {
+      throw new Error("TURSO_DATABASE_URL is required in production (e.g. libsql://your-db.turso.io).");
+    }
+    globalForDb.__storeReady = (async () => {
+      const client = createClient({
+        url: config.tursoDatabaseUrl,
+        authToken: config.tursoAuthToken,
+      });
+      await client.executeMultiple(SCHEMA);
+      globalForDb.__storeClient = client;
+      return client;
+    })().catch((err) => {
+      globalForDb.__storeReady = undefined; // allow a retry on the next request
+      throw err;
+    });
   }
-  return globalForDb.__storeDb;
+  return globalForDb.__storeReady;
 }

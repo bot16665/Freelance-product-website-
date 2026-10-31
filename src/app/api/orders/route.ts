@@ -17,7 +17,7 @@ export const GET = handle(async (req: Request) => {
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) throw badRequest("limit must be a positive whole number.");
   if (before !== undefined && !Number.isFinite(before)) throw badRequest("before must be a timestamp.");
 
-  const { orders, hasMore } = listOrders(scope, user.uid, { limit, before });
+  const { orders, hasMore } = await listOrders(scope, user.uid, { limit, before });
   const oldest = orders.length ? orders[orders.length - 1].createdAt : null;
   return Response.json(
     { orders, hasMore, nextBefore: hasMore ? oldest : null },
@@ -27,5 +27,5 @@ export const GET = handle(async (req: Request) => {
 
 export const POST = handle(async (req: Request) => {
   const user = await requireUser(req);
-  return Response.json({ order: placeOrder(user, await readJson(req)) }, { status: 201 });
+  return Response.json({ order: await placeOrder(user, await readJson(req)) }, { status: 201 });
 });

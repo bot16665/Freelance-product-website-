@@ -10,7 +10,8 @@
     "import:firebase": "node scripts/import-firebase.mjs"
   },
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
+    "@libsql/client": "^0.18.0",
+    "@vercel/blob": "^2.8.2",
     "exceljs": "^4.4.0",
     "firebase": "^13.0.0",
     "jose": "^6.2.13",
@@ -21,7 +22,6 @@
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

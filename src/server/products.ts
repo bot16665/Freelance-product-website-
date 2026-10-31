@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "./db";
 import { badRequest, num, text, type Row } from "./http";
 import type { InventoryItem } from "@/lib/types";
+import type { InValue, ResultSet } from "@libsql/client";
 
 function parseUrls(v: unknown): string[] {
   try {
@@ -57,25 +58,26 @@ export function toCatalogItem(r: Row): InventoryItem {
   };
 }
 
-export function listAll() {
-  const rows = getDb().prepare("SELECT * FROM products ORDER BY created_at DESC").all() as Row[];
-  return rows.map(toItem);
+export async function listAll() {
+  const db = await getDb();
+  const res = await db.execute("SELECT * FROM products ORDER BY created_at DESC");
+  return res.rows.map((r) => toItem(r as Row));
 }
 
-export function listCatalog() {
-  const rows = getDb()
-    .prepare(
-      `SELECT * FROM products
-       WHERE published = 1 AND selling_price > 0 AND quantity IS NOT NULL
-       ORDER BY name COLLATE NOCASE`
-    )
-    .all() as Row[];
-  return rows.map(toCatalogItem);
+export async function listCatalog() {
+  const db = await getDb();
+  const res = await db.execute(
+    `SELECT * FROM products
+     WHERE published = 1 AND selling_price > 0 AND quantity IS NOT NULL
+     ORDER BY name COLLATE NOCASE`
+  );
+  return res.rows.map((r) => toCatalogItem(r as Row));
 }
 
-export function getItem(id: string) {
-  const row = getDb().prepare("SELECT * FROM products WHERE id = ?").get(id) as Row | undefined;
-  return row ? toItem(row) : null;
+export async function getItem(id: string) {
+  const db = await getDb();
+  const res = await db.execute({ sql: "SELECT * FROM products WHERE id = ?", args: [id] });
+  return res.rows.length ? toItem(res.rows[0] as Row) : null;
 }
 
 /* ------------------------------ validation ------------------------------ */
@@ -85,7 +87,7 @@ function parseImages(v: unknown): string[] {
   if (!Array.isArray(v) || v.length > 9) throw badRequest("You can add up to 9 images.");
   return v.map((u) => {
     if (typeof u !== "string" || u.length > 500) throw badRequest("Invalid image link.");
-    // only our own uploads or normal https links (e.g. images imported from the old system)
+    // only Vercel Blob / https links, or legacy "/api/files/..." urls from the old data
     if (!u.startsWith("/api/files/") && !u.startsWith("https://")) throw badRequest("Invalid image link.");
     return u;
   });
@@ -122,40 +124,45 @@ export function parseProduct(body: Record<string, unknown>) {
 
 type Parsed = ReturnType<typeof parseProduct>;
 
-export function createItem(p: Parsed, uid: string) {
+const INSERT_SQL = `
+  INSERT INTO products (id, name, brand, manufacturer, category, purchase_date, warranty_expiry, status, notes,
+     selling_price, quantity, published, country_of_origin, gst_rate, warranty, packer_details,
+     main_image, image_urls, created_by, created_at, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+const insertArgs = (id: string, p: Parsed, uid: string, now: number): InValue[] => [
+  id, p.name, p.brand, p.manufacturer, p.category, p.purchaseDate, p.warrantyExpiry, p.status, p.notes,
+  p.sellingPrice, p.quantity, p.published ? 1 : 0, p.countryOfOrigin, p.gstRate, p.warranty, p.packerDetails,
+  p.mainImage, JSON.stringify(p.imageUrls), uid, now, now,
+];
+
+export async function createItem(p: Parsed, uid: string) {
   const id = randomUUID();
   const now = Date.now();
-  getDb()
-    .prepare(
-      `INSERT INTO products (id, name, brand, manufacturer, category, purchase_date, warranty_expiry, status, notes,
-         selling_price, quantity, published, country_of_origin, gst_rate, warranty, packer_details,
-         main_image, image_urls, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      id, p.name, p.brand, p.manufacturer, p.category, p.purchaseDate, p.warrantyExpiry, p.status, p.notes,
-      p.sellingPrice, p.quantity, p.published ? 1 : 0, p.countryOfOrigin, p.gstRate, p.warranty, p.packerDetails,
-      p.mainImage, JSON.stringify(p.imageUrls), uid, now, now
-    );
-  return getItem(id) as InventoryItem;
+  const db = await getDb();
+  await db.execute({ sql: INSERT_SQL, args: insertArgs(id, p, uid, now) });
+  return getItem(id) as Promise<InventoryItem>;
 }
 
-export function updateItem(id: string, p: Parsed) {
-  const res = getDb()
-    .prepare(
-      `UPDATE products SET name = ?, brand = ?, manufacturer = ?, category = ?, purchase_date = ?, warranty_expiry = ?,
+export async function updateItem(id: string, p: Parsed) {
+  const db = await getDb();
+  const res: ResultSet = await db
+    .execute({
+      sql: `UPDATE products SET name = ?, brand = ?, manufacturer = ?, category = ?, purchase_date = ?, warranty_expiry = ?,
          status = ?, notes = ?, selling_price = ?, quantity = ?, published = ?, country_of_origin = ?, gst_rate = ?,
          warranty = ?, packer_details = ?, main_image = ?, image_urls = ?, updated_at = ?
-       WHERE id = ?`
-    )
-    .run(
-      p.name, p.brand, p.manufacturer, p.category, p.purchaseDate, p.warrantyExpiry, p.status, p.notes,
-      p.sellingPrice, p.quantity, p.published ? 1 : 0, p.countryOfOrigin, p.gstRate, p.warranty, p.packerDetails,
-      p.mainImage, JSON.stringify(p.imageUrls), Date.now(), id
-    );
-  return res.changes === 1 ? getItem(id) : null;
+       WHERE id = ?`,
+      args: [
+        p.name, p.brand, p.manufacturer, p.category, p.purchaseDate, p.warrantyExpiry, p.status, p.notes,
+        p.sellingPrice, p.quantity, p.published ? 1 : 0, p.countryOfOrigin, p.gstRate, p.warranty, p.packerDetails,
+        p.mainImage, JSON.stringify(p.imageUrls), Date.now(), id,
+      ],
+    });
+  return res.rowsAffected === 1 ? getItem(id) : null;
 }
 
-export function deleteItem(id: string) {
-  return getDb().prepare("DELETE FROM products WHERE id = ?").run(id).changes === 1;
+export async function deleteItem(id: string) {
+  const db = await getDb();
+  const res = await db.execute({ sql: "DELETE FROM products WHERE id = ?", args: [id] });
+  return res.rowsAffected === 1;
 }
